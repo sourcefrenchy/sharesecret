@@ -4,16 +4,32 @@ import (
 	"crypto/sha256"
 	_ "crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 	"text/template"
+	"time"
 
+	"github.com/dchest/captcha"
 	"github.com/unrolled/secure"
 )
 
 var (
-	m = make(map[string]string)
+	m           = make(map[string]string)
+	ErrNotFound = errors.New("captcha: id not found")
+)
+
+const (
+	// Default number of digits in captcha solution.
+	DefaultLen = 6
+	// The number of captchas created that triggers garbage collection used
+	// by default store.
+	CollectNum = 100
+	// Expiration time of captchas used by default store.
+	Expiration = 10 * time.Minute
+	StdWidth   = 240
+	StdHeight  = 80
 )
 
 // ContextIndex contains the Secret we will capture from the user
@@ -24,6 +40,11 @@ type ContextIndex struct {
 // ContextResponse contains the URL we will send back to the user
 type ContextResponse struct {
 	URL string
+}
+
+// ContextRoot contains captcha for main page
+type ContextRoot struct {
+	CaptchaID string
 }
 
 func generateURL(secret string) string {
@@ -60,14 +81,31 @@ func urlHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func rootHandler(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if req.Method != http.MethodPost {
+
+		context := ContextRoot{
+			CaptchaID: captcha.New(),
+		}
+		log.Println("Captch ID generated :", context.CaptchaID)
 		parsedTemplate := template.Must(template.ParseFiles("static/index.html"))
-		err := parsedTemplate.Execute(w, nil)
+		err := parsedTemplate.Execute(w, context)
 		if err != nil {
 			log.Println("Error executing template :", err)
 			return
 		}
 	} else {
+
+		if !captcha.VerifyString(req.FormValue("captchaId"), req.FormValue("captchaSolution")) {
+			parsedTemplate := template.Must(template.ParseFiles("static/captchaerr.html"))
+			err := parsedTemplate.Execute(w, nil)
+			if err != nil {
+				log.Println("Error executing template :", err)
+				return
+			}
+			return
+		}
+
 		submitted := ContextIndex{
 			Secret: req.FormValue("secret"),
 		}
@@ -106,6 +144,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/g", urlHandler)
 	mux.HandleFunc("/", rootHandler)
+	mux.Handle("/captcha/", captcha.Server(captcha.StdWidth, captcha.StdHeight))
 
 	fileServer := http.FileServer(http.Dir("./static/"))
 	mux.Handle("/static/", http.StripPrefix("/static", fileServer))
