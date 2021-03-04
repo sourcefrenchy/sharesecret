@@ -4,32 +4,16 @@ import (
 	"crypto/sha256"
 	_ "crypto/sha256"
 	"encoding/hex"
-	"errors"
+	"github.com/dchest/captcha"
+	"github.com/unrolled/secure"
 	"log"
 	"net/http"
 	"strings"
 	"text/template"
-	"time"
-
-	"github.com/dchest/captcha"
-	"github.com/unrolled/secure"
 )
 
 var (
-	m           = make(map[string]string)
-	ErrNotFound = errors.New("captcha: id not found")
-)
-
-const (
-	// Default number of digits in captcha solution.
-	DefaultLen = 6
-	// The number of captchas created that triggers garbage collection used
-	// by default store.
-	CollectNum = 100
-	// Expiration time of captchas used by default store.
-	Expiration = 10 * time.Minute
-	StdWidth   = 240
-	StdHeight  = 80
+	m = make(map[string]string)
 )
 
 // ContextIndex contains the Secret we will capture from the user
@@ -45,59 +29,40 @@ type ContextResponse struct {
 // ContextRoot contains captcha for main page
 type ContextRoot struct {
 	CaptchaID string
+	UrlID     string
 }
 
 func generateURL(secret string) string {
 	h := sha256.New()
 	h.Write([]byte(secret))
-	shahash := hex.EncodeToString(h.Sum(nil))
-	m[shahash] = secret
-	log.Printf("\nAdding %s URL --> %s", shahash, secret)
-	return shahash
+	uniqueLink := hex.EncodeToString(h.Sum(nil))
+	m[uniqueLink] = secret
+	log.Printf("\nAdding %s URL --> %s", uniqueLink, secret)
+	return uniqueLink
 }
 
-func urlHandler(w http.ResponseWriter, req *http.Request) {
-	vals := req.URL.Query()
-	h, _ := vals["u"]
-	log.Printf("Extracted params=%q", vals)
-	log.Printf("Extracted hash=%s", h)
-	secret := m[strings.Join(h, "")]
-	retrieved := ContextIndex{
-		Secret: secret,
-	}
+func captchaHandler(w http.ResponseWriter, req *http.Request) {
+	var h string
 
-	_, ok := m[strings.Join(h, "")]
-	if ok {
-		delete(m, strings.Join(h, ""))
-		log.Println("deleting from m :", h)
-	}
-
-	parsedTemplate := template.Must(template.ParseFiles("static/sec.html"))
-	err := parsedTemplate.Execute(w, retrieved)
-	if err != nil {
-		log.Println("Error executing template :", err)
-		return
-	}
-}
-
-func rootHandler(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if req.Method != http.MethodPost {
+	if req.Method != http.MethodPost { // GET displays captcha
+		values := req.URL.Query()
+		h := values["u"]
 
 		context := ContextRoot{
 			CaptchaID: captcha.New(),
+			UrlID:     strings.Join(h, " "),
 		}
-		log.Println("Captch ID generated :", context.CaptchaID)
-		parsedTemplate := template.Must(template.ParseFiles("static/index.html"))
+
+		parsedTemplate := template.Must(template.ParseFiles("static/recv.html"))
 		err := parsedTemplate.Execute(w, context)
 		if err != nil {
 			log.Println("Error executing template :", err)
 			return
 		}
-	} else {
+	} else { // POST if captcha works, displays secret
 
-		if !captcha.VerifyString(req.FormValue("captchaId"), req.FormValue("captchaSolution")) {
-			parsedTemplate := template.Must(template.ParseFiles("static/captchaerr.html"))
+		if !captcha.VerifyString(req.FormValue("captchaId"), req.FormValue("captchaSolution")) { // Captcha test failed
+			parsedTemplate := template.Must(template.ParseFiles("static/captchaError.html"))
 			err := parsedTemplate.Execute(w, nil)
 			if err != nil {
 				log.Println("Error executing template :", err)
@@ -105,6 +70,38 @@ func rootHandler(w http.ResponseWriter, req *http.Request) {
 			}
 			return
 		}
+
+		h = req.FormValue("urlID")
+		secret := m[h]
+		retrieved := ContextIndex{
+			Secret: secret,
+		}
+
+		_, ok := m[h]
+		if ok {
+			delete(m, h)
+		}
+
+		parsedTemplate := template.Must(template.ParseFiles("static/sec.html"))
+		err := parsedTemplate.Execute(w, retrieved)
+		if err != nil {
+			log.Println("Error executing template :", err)
+			return
+		}
+
+	}
+}
+
+func rootHandler(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if req.Method != http.MethodPost {
+		parsedTemplate := template.Must(template.ParseFiles("static/index.html"))
+		err := parsedTemplate.Execute(w, nil)
+		if err != nil {
+			log.Println("Error executing template :", err)
+			return
+		}
+	} else {
 
 		submitted := ContextIndex{
 			Secret: req.FormValue("secret"),
@@ -142,7 +139,8 @@ func main() {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/g", urlHandler)
+	mux.HandleFunc("/g", captchaHandler)
+	mux.HandleFunc("/retrieve", captchaHandler)
 	mux.HandleFunc("/", rootHandler)
 	mux.Handle("/captcha/", captcha.Server(captcha.StdWidth, captcha.StdHeight))
 
