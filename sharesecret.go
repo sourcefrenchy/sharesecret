@@ -8,6 +8,7 @@ import (
 	"github.com/unrolled/secure"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"text/template"
 )
@@ -150,6 +151,13 @@ func main() {
 	log.Println("Starting server on :8888")
 	app := secureMiddleware.Handler(mux)
 	// err := http.ListenAndServe(":8888", app)
-	err := http.ListenAndServeTLS(":8888", "localhost.crt", "localhost.key", app)
+
+	if _, err := os.Stat("./server.crt"); os.IsNotExist(err) {
+		log.Fatal("Cannot find server.crt file locally, exiting.")
+	}
+	if _, err := os.Stat("./server.key"); os.IsNotExist(err) {
+		log.Fatal("Cannot find server.key file locally, exiting.")
+	}
+	err := http.ListenAndServeTLS(":8888", "server.crt", "server.key", app)
 	log.Fatal(err)
 }
