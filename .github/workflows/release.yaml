@@ -16,5 +16,3 @@ jobs:
 
       - name: Make binaries
         uses: sosedoff/actions/golang-build@master
-	with:
-	  args: linux/amd64 darwin/amd64
