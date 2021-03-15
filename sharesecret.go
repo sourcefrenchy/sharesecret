@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	_ "crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"github.com/dchest/captcha"
 	"github.com/unrolled/secure"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -14,7 +17,8 @@ import (
 )
 
 var (
-	m = make(map[string]string)
+	m             = make(map[string]string)
+	noCaptchaList []string
 )
 
 // ContextIndex contains the Secret we will capture from the user
@@ -33,6 +37,32 @@ type ContextRoot struct {
 	UrlID     string
 }
 
+// readLines reads a whole file into memory
+// and returns a slice of its lines.
+func readLines(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	return lines, scanner.Err()
+}
+
+func isIpv4(in string) bool {
+	_, _, err := net.ParseCIDR(in)
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	return true
+}
+
 func generateURL(secret string) string {
 	h := sha256.New()
 	h.Write([]byte(secret))
@@ -40,6 +70,45 @@ func generateURL(secret string) string {
 	m[uniqueLink] = secret
 	log.Printf("\nAdding %s URL --> %s", uniqueLink, secret)
 	return uniqueLink
+}
+
+func getIP(r *http.Request) (string, error) {
+	//Get IP from the X-REAL-IP header
+	ip := r.Header.Get("X-REAL-IP")
+	netIP := net.ParseIP(ip)
+	if netIP != nil {
+		return ip, nil
+	}
+
+	//Get IP from X-FORWARDED-FOR header
+	ips := r.Header.Get("X-FORWARDED-FOR")
+	splitIps := strings.Split(ips, ",")
+	for _, ip := range splitIps {
+		netIP := net.ParseIP(ip)
+		if netIP != nil {
+			return ip, nil
+		}
+	}
+
+	//Get IP from RemoteAddr
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return "", err
+	}
+	netIP = net.ParseIP(ip)
+	if netIP != nil {
+		return ip, nil
+	}
+	return "", fmt.Errorf("No valid ip found")
+}
+
+func Find(slice []string, val string) (int, bool) {
+	for i, item := range slice {
+		if item == val {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 func captchaHandler(w http.ResponseWriter, req *http.Request) {
@@ -54,11 +123,22 @@ func captchaHandler(w http.ResponseWriter, req *http.Request) {
 			UrlID:     strings.Join(h, " "),
 		}
 
-		parsedTemplate := template.Must(template.ParseFiles("static/recv.html"))
-		err := parsedTemplate.Execute(w, context)
+		ip, err := getIP(req)
 		if err != nil {
-			log.Println("Error executing template :", err)
-			return
+			w.WriteHeader(400)
+			w.Write([]byte("No valid ip"))
+		}
+		_, ipFound := Find(noCaptchaList, ip)
+		log.Printf("[D] IP detected: %s", ip)
+		if ipFound {
+			log.Println("CONGRATS no CAPTCHA for you!")
+		} else {
+			parsedTemplate := template.Must(template.ParseFiles("static/recv.html"))
+			err := parsedTemplate.Execute(w, context)
+			if err != nil {
+				log.Println("Error executing template :", err)
+				return
+			}
 		}
 	} else { // POST if captcha works, displays secret
 
@@ -157,6 +237,22 @@ func main() {
 	}
 	if _, err := os.Stat("./server.key"); os.IsNotExist(err) {
 		log.Fatal("Cannot find server.key file locally, exiting.")
+	}
+	if _, err := os.Stat("./networks.no.captcha"); os.IsNotExist(err) {
+		log.Print("Cannot find networks.no.captcha file, captcha will apply to everyone")
+	} else {
+		lines, err := readLines("networks.no.captcha")
+		if err != nil {
+			log.Fatalf("Readlines: %s", err)
+		}
+		noCaptchaList = append(noCaptchaList, "::1") // insert localhost
+		for _, line := range lines {
+			if isIpv4(line) {
+				fmt.Printf("No captcha for %s\n", line)
+				noCaptchaList = append(noCaptchaList, line)
+				continue
+			}
+		}
 	}
 	err := http.ListenAndServeTLS(":8888", "server.crt", "server.key", app)
 	log.Fatal(err)
