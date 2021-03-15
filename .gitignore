@@ -8,3 +8,6 @@ sharesecret
 /.idea/
 /go_build_sharesecret_go
 /go_build_sharesecret_sharesecret_go
+/go_*_build_sharesecret_go
+/*zip
+networks.no.captcha
