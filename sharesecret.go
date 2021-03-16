@@ -68,7 +68,7 @@ func generateURL(secret string) string {
 	h.Write([]byte(secret))
 	uniqueLink := hex.EncodeToString(h.Sum(nil))
 	m[uniqueLink] = secret
-	log.Printf("\nAdding %s URL --> %s", uniqueLink, secret)
+	log.Printf("\nNew secret saved in memory fr %s", uniqueLink)
 	return uniqueLink
 }
 
@@ -111,17 +111,37 @@ func Find(slice []string, val string) (int, bool) {
 	return -1, false
 }
 
-func captchaHandler(w http.ResponseWriter, req *http.Request) {
-	var h string
+func displaySecret(w http.ResponseWriter, filename string, u string, contextIndex bool) {
+	secret := m[u]
+	parsedTemplate := template.Must(template.ParseFiles(filename))
+	if contextIndex {
+		err := parsedTemplate.Execute(w, ContextIndex{
+			Secret: secret,
+		})
+		_, ok := m[u]
+		if ok {
+			delete(m, u)
+		}
+		if err != nil {
+			log.Println("Error executing template :", err)
+			return
+		}
+	} else {
+		err := parsedTemplate.Execute(w, ContextRoot{
+			CaptchaID: captcha.New(),
+			UrlID:     u,
+		})
+		if err != nil {
+			log.Println("Error executing template :", err)
+			return
+		}
+	}
+}
 
+func captchaHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost { // GET displays captcha
 		values := req.URL.Query()
 		h := values["u"]
-
-		context := ContextRoot{
-			CaptchaID: captcha.New(),
-			UrlID:     strings.Join(h, " "),
-		}
 
 		ip, err := getIP(req)
 		if err != nil {
@@ -129,19 +149,18 @@ func captchaHandler(w http.ResponseWriter, req *http.Request) {
 			w.Write([]byte("No valid ip"))
 		}
 		_, ipFound := Find(noCaptchaList, ip)
-		log.Printf("[D] IP detected: %s", ip)
 		if ipFound {
-			log.Println("CONGRATS no CAPTCHA for you!")
-		} else {
-			parsedTemplate := template.Must(template.ParseFiles("static/recv.html"))
-			err := parsedTemplate.Execute(w, context)
-			if err != nil {
-				log.Println("Error executing template :", err)
+			log.Printf("Detected whitelisted IP address %s, skipping Captcha", ip)
+			k, status := req.URL.Query()["u"]
+			if !status || len(k[0]) < 1 {
+				log.Println("Url Param 'u' is missing")
 				return
 			}
+			displaySecret(w, "static/sec.html", k[0], true)
+		} else {
+			displaySecret(w, "static/recv.html", strings.Join(h, " "), false)
 		}
 	} else { // POST if captcha works, displays secret
-
 		if !captcha.VerifyString(req.FormValue("captchaId"), req.FormValue("captchaSolution")) { // Captcha test failed
 			parsedTemplate := template.Must(template.ParseFiles("static/captchaError.html"))
 			err := parsedTemplate.Execute(w, nil)
@@ -151,25 +170,7 @@ func captchaHandler(w http.ResponseWriter, req *http.Request) {
 			}
 			return
 		}
-
-		h = req.FormValue("urlID")
-		secret := m[h]
-		retrieved := ContextIndex{
-			Secret: secret,
-		}
-
-		_, ok := m[h]
-		if ok {
-			delete(m, h)
-		}
-
-		parsedTemplate := template.Must(template.ParseFiles("static/sec.html"))
-		err := parsedTemplate.Execute(w, retrieved)
-		if err != nil {
-			log.Println("Error executing template :", err)
-			return
-		}
-
+		displaySecret(w, "static/sec.html", req.FormValue("urlID"), true)
 	}
 }
 
@@ -183,16 +184,13 @@ func rootHandler(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	} else {
-
 		submitted := ContextIndex{
 			Secret: req.FormValue("secret"),
 		}
-
 		// output results
 		context := ContextResponse{
 			URL: "https://localhost:8888/g?u=" + generateURL(submitted.Secret),
 		}
-
 		parsedTemplate := template.Must(template.ParseFiles("static/url.html"))
 		err := parsedTemplate.Execute(w, context)
 		if err != nil {
@@ -230,7 +228,6 @@ func main() {
 
 	log.Println("Starting server on :8888")
 	app := secureMiddleware.Handler(mux)
-	// err := http.ListenAndServe(":8888", app)
 
 	if _, err := os.Stat("./server.crt"); os.IsNotExist(err) {
 		log.Fatal("Cannot find server.crt file locally, exiting.")
@@ -246,9 +243,10 @@ func main() {
 			log.Fatalf("Readlines: %s", err)
 		}
 		noCaptchaList = append(noCaptchaList, "::1") // insert localhost
+		log.Println("> No captcha for loopback")
 		for _, line := range lines {
 			if isIpv4(line) {
-				fmt.Printf("No captcha for %s\n", line)
+				log.Printf("> No captcha for %s\n", line)
 				noCaptchaList = append(noCaptchaList, line)
 				continue
 			}
