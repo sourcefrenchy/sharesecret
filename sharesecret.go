@@ -286,6 +286,13 @@ func rootHandler(w http.ResponseWriter, req *http.Request) {
 			}
 			return
 		}
+		parsedTemplate := template.Must(template.ParseFiles("static/lenerror.html"))
+		err := parsedTemplate.Execute(w, nil)
+		if err != nil {
+			log.Println("Error executing template :", err)
+			return
+		}
+
 	}
 }
 
