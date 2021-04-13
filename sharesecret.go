@@ -327,8 +327,8 @@ func main() {
 		FrameDeny:          true,
 		ContentTypeNosniff: true,
 		BrowserXssFilter:   true,
-		ContentSecurityPolicy: "script-src 'https://" + fqdn + port + "/static/js/bootstrap.js' https:;" +
-			"object-src 'none'; base-uri 'none'; require-trusted-types-for 'script'; report-uri http://localhost:12345",
+		// ContentSecurityPolicy: "script-src 'https://" + fqdn + port + "/static/js/bootstrap.js' https:;" +
+		//	"object-src 'none'; base-uri 'none'; require-trusted-types-for 'script'; report-uri http://localhost:12345",
 	})
 	sslCfg := &tls.Config{
 		MinVersion:               tls.VersionTLS13,
