@@ -334,8 +334,8 @@ func main() {
 		FrameDeny:          true,
 		ContentTypeNosniff: true,
 		BrowserXssFilter:   true,
-		// ContentSecurityPolicy: "script-src 'https://" + fqdn + port + "/static/js/bootstrap.js' https:;" +
-		//	"object-src 'none'; base-uri 'none'; require-trusted-types-for 'script'; report-uri http://localhost:12345",
+		ContentSecurityPolicy: "default-src 'self' 'https://'" + fqdn + port + "script-src 'strict-dynamic' 'unsafe-inline' 'self' 'https://cdn.jsdelivr.net/npm/bootstrap@4.5.3/dist/js/bootstrap.bundle.min.js>' 'https://code.jquery.com/jquery-3.6.0.slim.min.js' https:;" +
+			"object-src 'none'; base-uri 'none'; require-trusted-types-for 'script'",
 	})
 	sslCfg := &tls.Config{
 		MinVersion:               tls.VersionTLS13,
