@@ -2,7 +2,7 @@
 [![CodeQL](https://github.com/sourcefrenchy/sharesecret/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/sourcefrenchy/sharesecret/actions/workflows/codeql-analysis.yml)
 
 # sharesecret
-A golang mini web service to learn Golang and easily share securely one-time secrets (URL is valid once!) with basic captcha support (although a list of IPs can be provided to skip captcha if need be). 
+A golang mini web service to learn Golang and easily share securely secrets once (URL is valid once!) with basic captcha support (although a list of IPs can be provided to skip captcha if need be). 
 
 ## Internals
 1. Self-managed TLS service (i.e. no need to front with NGINX)
