@@ -5,19 +5,21 @@ import (
 	"bytes"
 	_ "crypto/sha256"
 	"crypto/tls"
-	"filippo.io/age"
 	"fmt"
-	rl "github.com/ahmedash95/ratelimit"
-	"github.com/dchest/captcha"
-	log "github.com/sirupsen/logrus"
-	"github.com/twinj/uuid"
-	"github.com/unrolled/secure"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"text/template"
+
+	"filippo.io/age"
+	rl "github.com/ahmedash95/ratelimit"
+	"github.com/dchest/captcha"
+	log "github.com/sirupsen/logrus"
+	"github.com/twinj/uuid"
+	"github.com/unrolled/secure"
 )
 
 const (
@@ -29,6 +31,7 @@ var (
 	m              = make(map[string]string)
 	noCaptchaList  []string
 	rateLimitation = rl.CreateLimit("5r/s")
+	mutex          sync.Mutex
 )
 
 // ContextIndex contains the Secret we will capture from the user
@@ -383,6 +386,8 @@ func rateLimitationMiddleware(h http.Handler) http.Handler {
 }
 
 func isValidRequest(l rl.Limit, key string) bool {
+	mutex.Lock()
+	defer mutex.Unlock()
 	_, ok := l.Rates[key]
 	if !ok {
 		return true
