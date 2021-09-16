@@ -2,10 +2,6 @@
 sharesecret
 .gitattributes 2
 .gitignore 2
-/.
-/.vscode/
-/.vscode 2/
-/.idea/
 /go_build_sharesecret_go
 /go_build_sharesecret_sharesecret_go
 /go_*_build_sharesecret_go
