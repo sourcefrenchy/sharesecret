@@ -370,6 +370,8 @@ func main() {
 
 // rateLimitationMiddleware functions
 func rateLimitationMiddleware(h http.Handler) http.Handler {
+	mutex.Lock()
+	defer mutex.Unlock()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _ := getIP(r) // "127.0.0.1" // use ip or any user agent here
 		if !isValidRequest(rateLimitation, ip) {
@@ -386,8 +388,6 @@ func rateLimitationMiddleware(h http.Handler) http.Handler {
 }
 
 func isValidRequest(l rl.Limit, key string) bool {
-	mutex.Lock()
-	defer mutex.Unlock()
 	_, ok := l.Rates[key]
 	if !ok {
 		return true

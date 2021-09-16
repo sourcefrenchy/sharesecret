@@ -11,3 +11,5 @@ sharesecret
 /go_*_build_sharesecret_go
 /*zip
 networks.no.captcha
+go.sum
+go.mod
