@@ -5,7 +5,7 @@
 
 ## Overview
 
-This Go-based web service is designed for securely sharing secrets in a one-time, secure manner. It leverages the Age encryption tool for robust encryption, providing a unique blend of security and simplicity. Ideal for learning Go and secure communication principles, this project includes basic captcha support for additional security, with an option to bypass captcha for specific IP addresses.
+This Go-based web service is designed for securely sharing secrets in a one-time, secure manner. It leverages the Age encryption tool and includes basic captcha support for additional security, with an option to bypass captcha for specific IP addresses. I was a great way to learn more about Golang.
 
 ## Key Features
 
