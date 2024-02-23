@@ -215,6 +215,7 @@ func displaySecret(w http.ResponseWriter, filename string, url string, contextIn
 func captchaHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost { // GET displays captcha
 		values := req.URL.Query()
+		// ***TODO SECURITY*** need to sanitize h, and k extracted from it
 		h := values["u"]
 		if len(h) > 0 {
 			ip, err := getIP(req)
@@ -276,7 +277,7 @@ func rootHandler(w http.ResponseWriter, req *http.Request) {
 			}
 			log.Printf("[i] New secret by %s too big (size=%d), starting with:%s... Client info: %s",
 				ip, len(submitted.Secret), submitted.Secret[0:50], clientInfo)
-		} else if lenSecret > 11 { // at least 12 characters nowadays...
+		} else if lenSecret > 14 { // at least 15 characters nowadays...
 			// output results
 			context := ContextResponse{
 				URL: "https://" + fqdn + port + "/g?u=" + generateURL(ip, submitted.Secret),
@@ -325,15 +326,10 @@ func main() {
 
 	// Strong enough web security settings
 	secureMiddleware := secure.New(secure.Options{
-		// AllowedHosts:          []string{"example\\.com", ".*\\.example\\.com"},
-		// AllowedHostsAreRegex:  true,
 		HostsProxyHeaders: []string{"X-Forwarded-Host"},
 		SSLRedirect:       true,
 		SSLHost:           fqdn,
 		SSLProxyHeaders:   map[string]string{"X-Forwarded-Proto": "https"},
-		// STSSeconds:            31536000,
-		// STSIncludeSubdomains:  true,
-		// STSPreload:            true,
 		FrameDeny:          true,
 		ContentTypeNosniff: true,
 		BrowserXssFilter:   true,
