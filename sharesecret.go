@@ -262,6 +262,7 @@ func captchaHandler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("X-XSS-Protection", "1; mode=block")
 	if req.Method != http.MethodPost { // GET displays captcha
 		values := req.URL.Query()
+		// ***TODO SECURITY*** need to sanitize h, and k extracted from it
 		h := values["u"]
 		if len(h) > 0 {
 			ip, err := getIP(req)
@@ -323,7 +324,7 @@ func rootHandler(w http.ResponseWriter, req *http.Request) {
 			}
 			log.Printf("[i] New secret by %s too big (size=%d), User-Agent: %s",
 				ip, len(submitted.Secret), userAgent)
-		} else if lenSecret > 11 { // at least 12 characters nowadays...
+		} else if lenSecret > 14 { // at least 15 characters nowadays...
 			// output results
 			context := ContextResponse{
 				URL: "https://" + fqdn + port + "/g?u=" + generateURL(ip, submitted.Secret),
