@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -22,15 +23,15 @@ import (
 	"github.com/unrolled/secure"
 )
 
-const (
-	fqdn = "localhost"
-	port = ":8443"
+var (
+	fqdn = getEnv("FQDN", "localhost")
+	port = getEnv("PORT", ":8443")
 )
 
 var (
 	m              = make(map[string]string)
 	noCaptchaList  []string
-	rateLimitation = rl.CreateLimit("5r/s")
+	rateLimitation = rl.CreateLimit(getEnv("RATE_LIMIT", "5r/s"))
 	mutex          sync.Mutex
 )
 
@@ -73,6 +74,13 @@ func readLines(path string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
 func isIpv4(in string) bool {
 	_, _, err := net.ParseCIDR(in)
 	if err != nil {
@@ -109,33 +117,59 @@ func generateURL(ipaddr string, secret string) string {
 }
 
 func getIP(r *http.Request) (string, error) {
-	//Get IP from the X-REAL-IP header
-	ip := r.Header.Get("X-REAL-IP")
-	netIP := net.ParseIP(ip)
-	if netIP != nil {
-		return ip, nil
-	}
-
-	//Get IP from X-FORWARDED-FOR header
-	ips := r.Header.Get("X-FORWARDED-FOR")
-	splitIps := strings.Split(ips, ",")
-	for _, ip := range splitIps {
-		netIP := net.ParseIP(ip)
-		if netIP != nil {
-			return ip, nil
-		}
-	}
-
-	//Get IP from RemoteAddr
+	// Get IP from RemoteAddr first (most reliable)
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return "", err
 	}
-	netIP = net.ParseIP(ip)
+	netIP := net.ParseIP(ip)
 	if netIP != nil {
+		// Only trust proxy headers if coming from trusted proxy
+		if isTrustedProxy(netIP) {
+			// Check X-REAL-IP header
+			realIP := r.Header.Get("X-REAL-IP")
+			if realIP != "" {
+				if parsedIP := net.ParseIP(realIP); parsedIP != nil {
+					return realIP, nil
+				}
+			}
+
+			// Check X-FORWARDED-FOR header (use first valid IP)
+			forwardedFor := r.Header.Get("X-FORWARDED-FOR")
+			if forwardedFor != "" {
+				ips := strings.Split(forwardedFor, ",")
+				for _, fwdIP := range ips {
+					fwdIP = strings.TrimSpace(fwdIP)
+					if parsedIP := net.ParseIP(fwdIP); parsedIP != nil {
+						return fwdIP, nil
+					}
+				}
+			}
+		}
 		return ip, nil
 	}
 	return "", fmt.Errorf("no valid ip found")
+}
+
+func isTrustedProxy(ip net.IP) bool {
+	// Define trusted proxy networks (customize as needed)
+	trustedNetworks := []string{
+		"127.0.0.0/8",    // localhost
+		"10.0.0.0/8",     // private networks
+		"172.16.0.0/12",  // private networks
+		"192.168.0.0/16", // private networks
+	}
+
+	for _, network := range trustedNetworks {
+		_, cidr, err := net.ParseCIDR(network)
+		if err != nil {
+			continue
+		}
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func Find(slice []string, val string) (int, bool) {
@@ -148,6 +182,9 @@ func Find(slice []string, val string) (int, bool) {
 }
 
 func displayGenericError(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
 	parsedTemplate := template.Must(template.ParseFiles("static/captchaError.html"))
 	err := parsedTemplate.Execute(w, nil)
 	if err != nil {
@@ -155,7 +192,15 @@ func displayGenericError(w http.ResponseWriter) {
 	}
 }
 func displaySecret(w http.ResponseWriter, filename string, url string, contextIndex bool) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
 	data := strings.Split(url, ".")
+	if len(data) != 2 || data[0] == "" || data[1] == "" {
+		log.Printf("[!] Invalid URL format: %s", url)
+		displayGenericError(w)
+		return
+	}
 	location := data[0]
 	privateKey := "AGE-SECRET-KEY-" + data[1]
 
@@ -213,6 +258,9 @@ func displaySecret(w http.ResponseWriter, filename string, url string, contextIn
 }
 
 func captchaHandler(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
 	if req.Method != http.MethodPost { // GET displays captcha
 		values := req.URL.Query()
 		h := values["u"]
@@ -252,6 +300,9 @@ func captchaHandler(w http.ResponseWriter, req *http.Request) {
 
 func rootHandler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
 	if req.Method != http.MethodPost {
 		parsedTemplate := template.Must(template.ParseFiles("static/index.html"))
 		err := parsedTemplate.Execute(w, nil)
@@ -267,15 +318,12 @@ func rootHandler(w http.ResponseWriter, req *http.Request) {
 		lenSecret := len(submitted.Secret)
 
 		if lenSecret > 64 { // too long, data leakage attempt?
-			var clientInfo []string
-			for name, headers := range req.Header {
-				name = strings.ToLower(name)
-				for _, h := range headers {
-					clientInfo = append(clientInfo, fmt.Sprintf("%v: %v", name, h))
-				}
+			userAgent := req.Header.Get("User-Agent")
+			if userAgent == "" {
+				userAgent = "unknown"
 			}
-			log.Printf("[i] New secret by %s too big (size=%d), starting with:%s... Client info: %s",
-				ip, len(submitted.Secret), submitted.Secret[0:50], clientInfo)
+			log.Printf("[i] New secret by %s too big (size=%d), User-Agent: %s",
+				ip, len(submitted.Secret), userAgent)
 		} else if lenSecret > 11 { // at least 12 characters nowadays...
 			// output results
 			context := ContextResponse{
@@ -301,11 +349,14 @@ func rootHandler(w http.ResponseWriter, req *http.Request) {
 
 func main() {
 	// Check if we have a white list to skip captcha and certificate files
-	if _, err := os.Stat("./server.crt"); os.IsNotExist(err) {
-		log.Fatal("Cannot find server.crt file locally, exiting.")
+	certFile := getEnv("TLS_CERT_FILE", "./server.crt")
+	keyFile := getEnv("TLS_KEY_FILE", "./server.key")
+
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		log.Fatalf("Cannot find certificate file %s, exiting.", certFile)
 	}
-	if _, err := os.Stat("./server.key"); os.IsNotExist(err) {
-		log.Fatal("Cannot find server.key file locally, exiting.")
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		log.Fatalf("Cannot find key file %s, exiting.", keyFile)
 	}
 	if _, err := os.Stat("./networks.no.captcha"); os.IsNotExist(err) {
 		log.Print("[i] Cannot find whitelist file - captcha will apply to everyone")
@@ -325,20 +376,19 @@ func main() {
 
 	// Strong enough web security settings
 	secureMiddleware := secure.New(secure.Options{
-		// AllowedHosts:          []string{"example\\.com", ".*\\.example\\.com"},
-		// AllowedHostsAreRegex:  true,
-		HostsProxyHeaders: []string{"X-Forwarded-Host"},
-		SSLRedirect:       true,
-		SSLHost:           fqdn,
-		SSLProxyHeaders:   map[string]string{"X-Forwarded-Proto": "https"},
-		// STSSeconds:            31536000,
-		// STSIncludeSubdomains:  true,
-		// STSPreload:            true,
-		FrameDeny:          true,
-		ContentTypeNosniff: true,
-		BrowserXssFilter:   true,
-		ContentSecurityPolicy: "default-src 'self' 'https://'" + fqdn + port + "script-src 'strict-dynamic' 'unsafe-inline' 'self' 'https://cdn.jsdelivr.net/npm/bootstrap@4.5.3/dist/js/bootstrap.bundle.min.js>' 'https://code.jquery.com/jquery-3.6.0.slim.min.js' https:;" +
-			"object-src 'none'; base-uri 'none'; require-trusted-types-for 'script'",
+		HostsProxyHeaders:       []string{"X-Forwarded-Host"},
+		SSLRedirect:             true,
+		SSLHost:                 fqdn,
+		SSLProxyHeaders:         map[string]string{"X-Forwarded-Proto": "https"},
+		STSSeconds:              31536000,
+		STSIncludeSubdomains:    true,
+		STSPreload:              true,
+		FrameDeny:               true,
+		ContentTypeNosniff:      true,
+		BrowserXssFilter:        true,
+		ReferrerPolicy:          "strict-origin-when-cross-origin",
+		ContentSecurityPolicy:   "default-src 'self'; script-src 'self' 'unsafe-inline' https://code.jquery.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+		CustomFrameOptionsValue: "DENY",
 	})
 	sslCfg := &tls.Config{
 		MinVersion:               tls.VersionTLS13,
@@ -364,24 +414,29 @@ func main() {
 		TLSConfig:    sslCfg,
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
-	err := myHttp.ListenAndServeTLS("server.crt", "server.key")
+	err := myHttp.ListenAndServeTLS(certFile, keyFile)
 	log.Fatal(err)
 }
 
 // rateLimitationMiddleware functions
 func rateLimitationMiddleware(h http.Handler) http.Handler {
-	mutex.Lock()
-	defer mutex.Unlock()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _ := getIP(r) // "127.0.0.1" // use ip or any user agent here
-		if !isValidRequest(rateLimitation, ip) {
+
+		mutex.Lock()
+		valid := isValidRequest(rateLimitation, ip)
+		if valid {
+			err := rateLimitation.Hit(ip)
+			if err != nil {
+				log.Printf("rate limit error: %v", err)
+			}
+		}
+		mutex.Unlock()
+
+		if !valid {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			log.Printf("[i] %s blocked: exceeding rate limit", ip)
 			return
-		}
-		err := rateLimitation.Hit(ip)
-		if err != nil {
-			log.Printf("rate limit error: %v", err)
 		}
 		h.ServeHTTP(w, r)
 	})
