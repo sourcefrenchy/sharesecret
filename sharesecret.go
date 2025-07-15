@@ -10,17 +10,16 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"text/template"
 
 	"filippo.io/age"
-	rl "github.com/ahmedash95/ratelimit"
 	"github.com/dchest/captcha"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	"github.com/unrolled/secure"
+	"golang.org/x/time/rate"
 )
 
 var (
@@ -29,10 +28,10 @@ var (
 )
 
 var (
-	m              = make(map[string]string)
-	noCaptchaList  []string
-	rateLimitation = rl.CreateLimit(getEnv("RATE_LIMIT", "5r/s"))
-	mutex          sync.Mutex
+	m             = make(map[string]string)
+	noCaptchaList []string
+	rateLimiters  = make(map[string]*rate.Limiter)
+	mutex         sync.Mutex
 )
 
 // ContextIndex contains the Secret we will capture from the user
@@ -424,31 +423,19 @@ func rateLimitationMiddleware(h http.Handler) http.Handler {
 		ip, _ := getIP(r) // "127.0.0.1" // use ip or any user agent here
 
 		mutex.Lock()
-		valid := isValidRequest(rateLimitation, ip)
-		if valid {
-			err := rateLimitation.Hit(ip)
-			if err != nil {
-				log.Printf("rate limit error: %v", err)
-			}
+		limiter, exists := rateLimiters[ip]
+		if !exists {
+			// Create new limiter: 5 requests per second with burst of 5
+			limiter = rate.NewLimiter(rate.Limit(5), 5)
+			rateLimiters[ip] = limiter
 		}
 		mutex.Unlock()
 
-		if !valid {
+		if !limiter.Allow() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			log.Printf("[i] %s blocked: exceeding rate limit", ip)
 			return
 		}
 		h.ServeHTTP(w, r)
 	})
-}
-
-func isValidRequest(l rl.Limit, key string) bool {
-	_, ok := l.Rates[key]
-	if !ok {
-		return true
-	}
-	if l.Rates[key].Hits == l.MaxRequests {
-		return false
-	}
-	return true
 }
